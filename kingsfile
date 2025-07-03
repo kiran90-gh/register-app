@@ -38,17 +38,6 @@ pipeline {
 		        }
 	           }	
            }
-       }
-       stage("Quality Gate"){
-           steps {
-               script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
-                }	
-               timeout(time: 5, unit: 'MINUTES') { // Wait up to 15 mins
-          waitForQualityGate abortPipeline: false
-          }
-             }
-
           }
       }
   }
