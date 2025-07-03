@@ -4,63 +4,68 @@ pipeline {
         jdk 'java-17'
         maven 'maven3'
     }
-	 environment {
-	    APP_NAME = "register-app-pipeline-image"
-            RELEASE = "1.0.0"
-            DOCKER_USER = "kiran90"
-            DOCKER_PASS = 'dockerhub'
-            IMAGE_NAME = "${DOCKER_USER}" + "/" + "${APP_NAME}"
-            IMAGE_TAG = "${RELEASE}-${BUILD_NUMBER}"
+    environment {
+        APP_NAME = "register-app-pipeline-image"
+        RELEASE = "1.0.0"
+        DOCKER_USER = "kiran90"
+        DOCKER_PASS = credentials('dockerhub')  // ✔️ Use Jenkins credentials for security
+        IMAGE_NAME = "${DOCKER_USER}/${APP_NAME}"  // ✔️ Simplified string formatting
+        IMAGE_TAG = "${RELEASE}-${BUILD_NUMBER}"
     }
-	stages{
-        stage("Cleanup Workspace"){
-                steps {
+    stages {
+        stage("Cleanup Workspace") {
+            steps {
                 cleanWs()
-                }
+            }
         }
 
-        stage("Checkout from SCM"){
-                steps {
-                    git branch: 'main', credentialsId: 'github', url: 'https://github.com/kiran90-gh/register-app.git'
-                }
+        stage("Checkout from SCM") {
+            steps {
+                git branch: 'main', credentialsId: 'github', url: 'https://github.com/kiran90-gh/register-app.git'
+            }
         }
 
-        stage("Build Application"){
+        stage("Build Application") {
             steps {
                 sh "mvn clean package"
             }
+        }
 
-       }
+        stage("Test Application") {
+            steps {
+                sh "mvn test"
+            }
+        }
 
-       stage("Test Application"){
-           steps {
-                 sh "mvn test"
-           }
-       }
-       stage("SonarQube Analysis"){
-           steps {
-	           script {
-		        withSonarQubeEnv(credentialsId: 'sonar-token') { 
+        stage("SonarQube Analysis") {
+            steps {
+                script {
+                    withSonarQubeEnv(credentialsId: 'sonar-token') { 
                         sh "mvn sonar:sonar"
-		        }
-	           }
-               }
-           }
+                    }
+                }
+            }
+        }
+
+        // ✔️ Missing 'stage' closure was causing syntax issues
+        stage("Wait for Quality Gate") {
+            steps {
+                timeout(time: 15, unit: 'MINUTES') {  // ✔️ Prevent infinite hangs
+                    waitForQualityGate abortPipeline: true  // ✔️ Fail if Quality Gate fails
+                }
+            }
+        }
+
         stage("Build & Push Docker Image") {
             steps {
                 script {
-                    docker.withRegistry('',DOCKER_PASS) {
-                        docker_image = docker.build "${IMAGE_NAME}"
-                    }
-
-                    docker.withRegistry('',DOCKER_PASS) {
-                        docker_image.push("${IMAGE_TAG}")
-                        docker_image.push('latest')
-                       }
+                    docker.withRegistry('https://registry.hub.docker.com', 'dockerhub-creds') {  // ✔️ Explicit registry URL
+                        def dockerImage = docker.build("${IMAGE_NAME}:${IMAGE_TAG}")
+                        dockerImage.push()  // Pushes with IMAGE_TAG
+                        dockerImage.push('latest')  // Also push as 'latest'
                     }
                 }
-
             }
- 
-         }
-      }
+        }
+    }
+}
