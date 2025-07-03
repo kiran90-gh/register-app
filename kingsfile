@@ -44,7 +44,7 @@ pipeline {
                script {
                     waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
                 }	
-               timeout(time: 15, unit: 'MINUTES') { // Wait up to 15 mins
+               timeout(time: 5, unit: 'MINUTES') { // Wait up to 15 mins
           waitForQualityGate abortPipeline: false
           }
              }
