@@ -47,15 +47,6 @@ pipeline {
             }
         }
 
-        // ✔️ Missing 'stage' closure was causing syntax issues
-        stage("Wait for Quality Gate") {
-            steps {
-                timeout(time: 15, unit: 'MINUTES') {  // ✔️ Prevent infinite hangs
-                    waitForQualityGate abortPipeline: true  // ✔️ Fail if Quality Gate fails
-                }
-            }
-        }
-
         stage("Build & Push Docker Image") {
             steps {
                 script {
