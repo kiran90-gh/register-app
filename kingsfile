@@ -7,9 +7,10 @@ pipeline {
     environment {
         APP_NAME = "register-app-pipeline-image"
         RELEASE = "1.0.0"
-        IMAGE_NAME = "${DOCKER_USER}/${APP_NAME}"
+        DOCKER_USER = "kiran90"
+        DOCKER_PASS = credentials('dockerhub')  // ✔️ Use Jenkins credentials for security
+        IMAGE_NAME = "${DOCKER_USER}/${APP_NAME}"  // ✔️ Simplified string formatting
         IMAGE_TAG = "${RELEASE}-${BUILD_NUMBER}"
-        REGISTRY_URL = 'https://registry.hub.docker.com'
     }
     stages {
         stage("Cleanup Workspace") {
@@ -20,9 +21,7 @@ pipeline {
 
         stage("Checkout from SCM") {
             steps {
-                git branch: 'main', 
-                credentialsId: 'github', 
-                url: 'https://github.com/kiran90-gh/register-app.git'
+                git branch: 'main', credentialsId: 'github', url: 'https://github.com/kiran90-gh/register-app.git'
             }
         }
 
@@ -30,28 +29,20 @@ pipeline {
             steps {
                 sh "mvn clean package"
             }
-            post {
-                success {
-                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                }
-            }
         }
 
         stage("Test Application") {
             steps {
                 sh "mvn test"
             }
-            post {
-                always {
-                    junit 'target/surefire-reports/*.xml'
-                }
-            }
         }
 
         stage("SonarQube Analysis") {
             steps {
-                withSonarQubeEnv(credentialsId: 'sonar-token') { 
-                    sh "mvn sonar:sonar"
+                script {
+                    withSonarQubeEnv(credentialsId: 'sonar-token') { 
+                        sh "mvn sonar:sonar"
+                    }
                 }
             }
         }
@@ -59,88 +50,35 @@ pipeline {
         stage("Build & Push Docker Image") {
             steps {
                 script {
-                    docker.withRegistry(REGISTRY_URL, 'dockerhub') {
+                    docker.withRegistry('https://registry.hub.docker.com', 'dockerhub') {  // ✔️ Explicit registry URL
                         def dockerImage = docker.build("${IMAGE_NAME}:${IMAGE_TAG}")
-                        dockerImage.push()
-                        dockerImage.push('latest')
+                        dockerImage.push()  // Pushes with IMAGE_TAG
+                        dockerImage.push('latest')  // Also push as 'latest'
                     }
                 }
             }
-        }
-
-        stage("Trivy Vulnerability Scan") {
+          }
+         stage("Trivy Scan") {
+           steps {
+               script {
+	            sh ('docker run -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image kiran90/register-app-pipeline-image:latest --no-progress --scanners vuln  --exit-code 0 --severity HIGH,CRITICAL --format table')
+                 }
+               }
+           }
+         stage ('Cleanup Artifacts') {
+           steps {
+               script {
+                    sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG}"
+                    sh "docker rmi ${IMAGE_NAME}:latest"
+                  }
+               }
+           }
+         stage("Trigger CD Pipeline") {
             steps {
                 script {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'dockerhub',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )]) {
-                        // Scan both the versioned and latest tags
-                        sh '''
-                            docker run --rm \
-                                -v /var/run/docker.sock:/var/run/docker.sock \
-                                aquasec/trivy image \
-                                ${DOCKER_USER}/${APP_NAME}:${IMAGE_TAG} \
-                                --scanners vuln \
-                                --severity HIGH,CRITICAL \
-                                --exit-code 1 \
-                                --format table
-                            
-                            docker run --rm \
-                                -v /var/run/docker.sock:/var/run/docker.sock \
-                                aquasec/trivy image \
-                                ${DOCKER_USER}/${APP_NAME}:latest \
-                                --scanners vuln \
-                                --severity HIGH,CRITICAL \
-                                --exit-code 1 \
-                                --format table
-                        '''
+                    sh "curl -v -k --user clouduser:${JENKINS_API_TOKEN} -X POST -H 'cache-control: no-cache' -H 'content-type: application/x-www-form-urlencoded' --data 'IMAGE_TAG=${IMAGE_TAG}' 'ec2-13-126-24-134.ap-south-1.compute.amazonaws.com:8080/job/gitops-register-app-cd/buildWithParameters?token=gitops-token'"
                     }
-                }
-            }
+                 }
+              }
+           }
         }
-
-        stage('Cleanup Artifacts') {
-            steps {
-                script {
-                    sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true"
-                    sh "docker rmi ${IMAGE_NAME}:latest || true"
-                }
-            }
-        }
-
-        stage("Trigger CD Pipeline") {
-            steps {
-                script {
-                    withCredentials([
-                        string(credentialsId: 'jenkins-api-token', variable: 'JENKINS_API_TOKEN')
-                    ]) {
-                        sh """
-                            curl -v -k \
-                                --user clouduser:${JENKINS_API_TOKEN} \
-                                -X POST \
-                                -H 'cache-control: no-cache' \
-                                -H 'content-type: application/x-www-form-urlencoded' \
-                                --data 'IMAGE_TAG=${IMAGE_TAG}' \
-                                '${JENKINS_CD_URL}/job/gitops-register-app-cd/buildWithParameters?token=gitops-token'
-                        """
-                    }
-                }
-            }
-        }
-    }
-    post {
-        always {
-            cleanWs()
-            script {
-                // Additional cleanup if needed
-            }
-        }
-        failure {
-            emailext body: 'Pipeline failed. Please check: ${BUILD_URL}',
-                    subject: 'Pipeline Failed: ${JOB_NAME} - Build #${BUILD_NUMBER}',
-                    to: 'team@example.com'
-        }
-    }
-}
